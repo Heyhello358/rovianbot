@@ -32,12 +32,14 @@ if(i.isButton() && i.customId.startsWith("rovian_buy:")){
  if(!req||req.expires<now())return i.update({content:"This purchase request expired.",components:[]});
  if(!db.prepare("SELECT 1 FROM accounts WHERE uuid=? AND discord_id=?").get(req.uuid,i.user.id))return i.reply({content:"This request belongs to another Discord account.",ephemeral:true});
  const outcome=db.transaction(()=>{
+  const claimed=db.prepare("UPDATE purchase_requests SET status='processing' WHERE id=? AND status='pending' AND expires>=?").run(id,now());
+  if(!claimed.changes)throw Error("request_already_used");
   const item=db.prepare("SELECT * FROM shop_items WHERE id=? AND active=1").get(req.item_id);
   const a=account.get(req.uuid);
   if(!item||!a)throw Error("item_unavailable");
   const debit=db.prepare("UPDATE accounts SET jems=jems-? WHERE uuid=? AND jems>=?").run(item.price,req.uuid,item.price);
   if(!debit.changes)throw Error("insufficient_jems");
-  db.prepare("UPDATE purchase_requests SET status='approved' WHERE id=? AND status='pending'").run(id);
+  db.prepare("UPDATE purchase_requests SET status='approved' WHERE id=?").run(id);
   return {item,balance:a.jems-item.price};
  })();
  await i.update({content:"Purchase approved: **"+outcome.item.name+"** for "+outcome.item.price+" Jems. New balance: "+outcome.balance+".",components:[]});
