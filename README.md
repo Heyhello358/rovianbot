@@ -29,6 +29,7 @@ Discord bot + private Jems API for Rovian Client.
 - `POST /api/link/start` — creates a 10-minute linking code
 - `GET /api/balance/:uuid`
 - `GET /api/shop/items` — public active shop items and cape image URLs
+- `POST /api/shop/purchase` — atomically charges a linked account and sends a Discord DM receipt; requires `x-rovian-secret`
 
 ## Upload capes by DM
 1. Add your Discord user ID to `SHOP_UPLOAD_USER_IDS` in Railway Variables (comma-separated for multiple staff).
