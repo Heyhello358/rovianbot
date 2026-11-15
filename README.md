@@ -19,7 +19,7 @@ Discord bot + private Jems API for Rovian Client.
 
 ## Commands
 - `/link code` — link Minecraft account; first link gives +200 Jems
-- `/balance` — show Jems
+- `/balance` — show Jems\n- `/daily` — claim 20 Jems once per UTC calendar day
 - `/giftcode create` and `/giftcode redeem`
 - `/jems give` and `/jems remove` — administrators
 - `/jemdrop create`, `/jemdrop enter`, `/jemdrop cancel`
