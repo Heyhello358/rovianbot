@@ -26,19 +26,19 @@ Discord bot + private Jems API for Rovian Client.
 
 ## API
 - `GET /health`
-- `POST /api/link/start` — creates a 10-minute linking code
+- `POST /api/link/start` — creates a 10-minute linking code for the logged-in Minecraft profile
 - `GET /api/balance/:uuid`
 - `GET /api/shop/items` — public active shop items and cape image URLs
-- `POST /api/shop/purchase` — atomically charges a linked account and sends a Discord DM receipt; requires `x-rovian-secret`
+- `POST /api/shop/purchase/request` — sends a purchase approval button to the linked Discord account; the Jems debit happens only after the Discord user confirms
 
 ## Upload capes by DM
 1. Add your Discord user ID to `SHOP_UPLOAD_USER_IDS` in Railway Variables (comma-separated for multiple staff).
 2. Enable Message Content Intent for the bot in the Discord Developer Portal.
 3. DM the bot one PNG, JPG, or WEBP image (max 8 MB) with: `Cape "Fire Wings", 500 Jems`.
-4. The bot adds it to the catalog; the Rovian launcher loads cape items from `/api/shop/items`.
+4. The bot adds it to the catalog; the Rovian Fabric client loads cape items from `/api/shop/items`.
 
 Uploads must be sent as a DM attachment. The image URL is the Discord attachment CDN URL.
-Private API requests require the `x-rovian-secret` header.
+The Minecraft client must use the Railway public HTTPS domain. It does not contain `API_SECRET`; purchases are confirmed in Discord. Keep the database on persistent storage.
 
 ## Security
 Development starter only. Never put the bot token or API secret in the Minecraft JAR or public client. The link endpoint must only be called by a trusted backend that has verified the player's Microsoft/Minecraft identity. Use HTTPS and production storage before opening this to public players.
