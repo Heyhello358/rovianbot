@@ -1,5 +1,5 @@
 require("dotenv").config();
-const {Client,GatewayIntentBits,REST,Routes,SlashCommandBuilder,PermissionFlagsBits,Partials}=require("discord.js");
+const {Client,GatewayIntentBits,REST,Routes,SlashCommandBuilder,PermissionFlagsBits,Partials,ActionRowBuilder,ButtonBuilder,ButtonStyle}=require("discord.js");
 const Database=require("better-sqlite3"), express=require("express"), crypto=require("crypto");
 for(const k of ["DISCORD_TOKEN","CLIENT_ID","GUILD_ID","API_SECRET"]) if(!process.env[k]) throw Error("Missing "+k);
 const fs=require("node:fs"), path=require("node:path");
@@ -7,7 +7,7 @@ const dbFile=process.env.DB_FILE||"./jems.sqlite";
 fs.mkdirSync(path.dirname(path.resolve(dbFile)),{recursive:true});
 const db=new Database(dbFile);
 db.pragma("journal_mode=WAL");
-db.exec("CREATE TABLE IF NOT EXISTS accounts(uuid TEXT PRIMARY KEY,name TEXT,discord_id TEXT UNIQUE,jems INTEGER DEFAULT 0,bonus INTEGER DEFAULT 0); CREATE TABLE IF NOT EXISTS links(hash TEXT PRIMARY KEY,uuid TEXT,name TEXT,expires INTEGER,used INTEGER DEFAULT 0); CREATE TABLE IF NOT EXISTS gifts(code TEXT PRIMARY KEY,amount INTEGER,uses INTEGER); CREATE TABLE IF NOT EXISTS redeemed(code TEXT,uuid TEXT,PRIMARY KEY(code,uuid)); CREATE TABLE IF NOT EXISTS drops(id INTEGER PRIMARY KEY AUTOINCREMENT,channel TEXT,amount INTEGER,winners INTEGER,opens INTEGER,status TEXT DEFAULT 'scheduled'); CREATE TABLE IF NOT EXISTS entries(drop_id INTEGER,discord_id TEXT,PRIMARY KEY(drop_id,discord_id)); CREATE TABLE IF NOT EXISTS shop_items(id TEXT PRIMARY KEY,type TEXT NOT NULL,name TEXT NOT NULL,price INTEGER NOT NULL,image_url TEXT NOT NULL,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,active INTEGER DEFAULT 1); CREATE TABLE IF NOT EXISTS daily_claims(uuid TEXT NOT NULL,claimed_day TEXT NOT NULL,PRIMARY KEY(uuid,claimed_day));");
+db.exec("CREATE TABLE IF NOT EXISTS accounts(uuid TEXT PRIMARY KEY,name TEXT,discord_id TEXT UNIQUE,jems INTEGER DEFAULT 0,bonus INTEGER DEFAULT 0); CREATE TABLE IF NOT EXISTS links(hash TEXT PRIMARY KEY,uuid TEXT,name TEXT,expires INTEGER,used INTEGER DEFAULT 0); CREATE TABLE IF NOT EXISTS gifts(code TEXT PRIMARY KEY,amount INTEGER,uses INTEGER); CREATE TABLE IF NOT EXISTS redeemed(code TEXT,uuid TEXT,PRIMARY KEY(code,uuid)); CREATE TABLE IF NOT EXISTS drops(id INTEGER PRIMARY KEY AUTOINCREMENT,channel TEXT,amount INTEGER,winners INTEGER,opens INTEGER,status TEXT DEFAULT 'scheduled'); CREATE TABLE IF NOT EXISTS entries(drop_id INTEGER,discord_id TEXT,PRIMARY KEY(drop_id,discord_id)); CREATE TABLE IF NOT EXISTS shop_items(id TEXT PRIMARY KEY,type TEXT NOT NULL,name TEXT NOT NULL,price INTEGER NOT NULL,image_url TEXT NOT NULL,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,active INTEGER DEFAULT 1); CREATE TABLE IF NOT EXISTS daily_claims(uuid TEXT NOT NULL,claimed_day TEXT NOT NULL,PRIMARY KEY(uuid,claimed_day)); CREATE TABLE IF NOT EXISTS purchase_requests(id TEXT PRIMARY KEY,uuid TEXT NOT NULL,item_id TEXT NOT NULL,expires INTEGER NOT NULL,status TEXT DEFAULT 'pending');");
 const client=new Client({intents:[GatewayIntentBits.Guilds,GatewayIntentBits.DirectMessages,GatewayIntentBits.MessageContent],partials:[Partials.Channel]}), now=()=>Math.floor(Date.now()/1000), hash=s=>crypto.createHash("sha256").update(s).digest("hex"), code=n=>crypto.randomBytes(n).toString("hex").slice(0,n).toUpperCase();
 const account=db.prepare("SELECT * FROM accounts WHERE uuid=?"), add=db.prepare("UPDATE accounts SET jems=jems+? WHERE uuid=?");
 const admin=i=>i.memberPermissions?.has(PermissionFlagsBits.Administrator);
@@ -25,7 +25,26 @@ async function openDrop(id){const d=db.prepare("SELECT * FROM drops WHERE id=? A
 client.on("messageCreate",async m=>{if(m.author.bot||m.guild)return;const raw=m.content.trim();const match=raw.match(/^cape\s+"([^"]{1,40})"\s*,\s*(\d{1,7})\s*jems?$/i);if(!match)return;const allowed=(process.env.SHOP_UPLOAD_USER_IDS||"").split(",").map(x=>x.trim()).filter(Boolean);if(!allowed.includes(m.author.id)){await m.reply("You are not allowed to upload shop items.");return;}const files=[...m.attachments.values()];if(files.length!==1){await m.reply('Attach exactly one image and use: `Cape "Name", 500 Jems`');return;}const file=files[0],type=(file.contentType||"").toLowerCase();if(!["image/png","image/jpeg","image/webp"].includes(type)||file.size>8*1024*1024){await m.reply("Use one PNG, JPG, or WEBP image under 8 MB.");return;}const name=match[1].trim(),price=Number(match[2]);if(!price||price>1000000){await m.reply("Price must be between 1 and 1,000,000 Jems.");return;}const id="cape-"+crypto.randomBytes(8).toString("hex");db.prepare("INSERT INTO shop_items(id,type,name,price,image_url,created_by,created_at) VALUES(?,?,?,?,?,?,?)").run(id,"cape",name,price,file.url,m.author.id,now());await m.reply("Cape added to the Rovian shop: **"+name+"** — **"+price+" Jems**.
 Image: "+file.url);});
 client.once("ready",async()=>{console.log("Logged in as "+client.user.tag);for(const d of db.prepare("SELECT id,opens FROM drops WHERE status='scheduled'").all())setTimeout(()=>openDrop(d.id),Math.max(0,(d.opens-now())*1000));});
-client.on("interactionCreate",async i=>{if(!i.isChatInputCommand())return;try{
+client.on("interactionCreate",async i=>{try{
+if(i.isButton() && i.customId.startsWith("rovian_buy:")){
+ const id=i.customId.slice("rovian_buy:".length);
+ const req=db.prepare("SELECT * FROM purchase_requests WHERE id=? AND status='pending'").get(id);
+ if(!req||req.expires<now())return i.update({content:"This purchase request expired.",components:[]});
+ if(!db.prepare("SELECT 1 FROM accounts WHERE uuid=? AND discord_id=?").get(req.uuid,i.user.id))return i.reply({content:"This request belongs to another Discord account.",ephemeral:true});
+ const outcome=db.transaction(()=>{
+  const item=db.prepare("SELECT * FROM shop_items WHERE id=? AND active=1").get(req.item_id);
+  const a=account.get(req.uuid);
+  if(!item||!a)throw Error("item_unavailable");
+  const debit=db.prepare("UPDATE accounts SET jems=jems-? WHERE uuid=? AND jems>=?").run(item.price,req.uuid,item.price);
+  if(!debit.changes)throw Error("insufficient_jems");
+  db.prepare("UPDATE purchase_requests SET status='approved' WHERE id=? AND status='pending'").run(id);
+  return {item,balance:a.jems-item.price};
+ })();
+ await i.update({content:"Purchase approved: **"+outcome.item.name+"** for "+outcome.item.price+" Jems. New balance: "+outcome.balance+".",components:[]});
+ await dm(req.uuid,"Purchase complete: "+outcome.item.name+" (-"+outcome.item.price+" Jems). Balance: "+outcome.balance+" Jems.");
+ return;
+}
+if(!i.isChatInputCommand())return;
 if(i.commandName==="link"){const c=i.options.getString("code").trim().toUpperCase(),l=db.prepare("SELECT * FROM links WHERE hash=?").get(hash(c));if(!l||l.used||l.expires<now())return i.reply({content:"Invalid or expired code.",ephemeral:true});const old=account.get(l.uuid),other=db.prepare("SELECT * FROM accounts WHERE discord_id=?").get(i.user.id);if((old?.discord_id&&old.discord_id!==i.user.id)||(other&&other.uuid!==l.uuid))return i.reply({content:"Account already linked elsewhere.",ephemeral:true});const bonus=old?.bonus?0:200;db.prepare("INSERT INTO accounts(uuid,name,discord_id,jems,bonus) VALUES(?,?,?,?,1) ON CONFLICT(uuid) DO UPDATE SET name=excluded.name,discord_id=excluded.discord_id,jems=accounts.jems+excluded.jems,bonus=1").run(l.uuid,l.name,i.user.id,bonus);db.prepare("UPDATE links SET used=1 WHERE hash=?").run(hash(c));await i.reply({content:"Linked "+l.name+". "+(bonus?"+200 Jems link bonus!":"No repeat bonus."),ephemeral:true});await dm(l.uuid,"Your Discord account is linked to Rovian.");return;}
 if(i.commandName==="balance"){const a=db.prepare("SELECT * FROM accounts WHERE discord_id=?").get(i.user.id);return i.reply({content:a?a.name+": "+a.jems+" Jems":"Link first with /link.",ephemeral:true});}
 if(i.commandName==="daily"){const a=db.prepare("SELECT * FROM accounts WHERE discord_id=?").get(i.user.id);if(!a)return i.reply({content:"Link first with /link.",ephemeral:true});const day=new Date().toISOString().slice(0,10);try{db.prepare("INSERT INTO daily_claims(uuid,claimed_day) VALUES(?,?)").run(a.uuid,day);}catch{return i.reply({content:"You already claimed today. Come back tomorrow!",ephemeral:true});}add.run(20,a.uuid);await i.reply({content:"Daily reward claimed: +20 Jems!",ephemeral:true});await dm(a.uuid,"Daily reward: +20 Jems. Your balance is now "+(a.jems+20)+".");return;}
@@ -34,28 +53,10 @@ if(i.commandName==="jems"){if(!admin(i))return i.reply({content:"Admin only.",ep
 if(i.commandName==="jemdrop"){const s=i.options.getSubcommand();if(s==="create"){if(!canDrop(i))return i.reply({content:"No permission.",ephemeral:true});const n=i.options.getInteger("amount"),w=i.options.getInteger("winners"),delay=i.options.getInteger("delay"),opens=now()+delay,id=Number(db.prepare("INSERT INTO drops(channel,amount,winners,opens) VALUES(?,?,?,?)").run(i.channelId,n,w,opens).lastInsertRowid);await i.reply("Drop #"+id+" scheduled; opens <t:"+opens+":R>.");setTimeout(()=>openDrop(id),delay*1000);return;}if(s==="enter"){const d=db.prepare("SELECT * FROM drops WHERE status='open' ORDER BY id DESC LIMIT 1").get();if(!d)return i.reply({content:"No active drop.",ephemeral:true});if(!db.prepare("SELECT 1 FROM accounts WHERE discord_id=?").get(i.user.id))return i.reply({content:"Link your Minecraft account first.",ephemeral:true});try{db.prepare("INSERT INTO entries VALUES(?,?)").run(d.id,i.user.id);}catch{return i.reply({content:"Already entered.",ephemeral:true});}return i.reply({content:"Entered!",ephemeral:true});}if(s==="cancel"){if(!canDrop(i))return i.reply({content:"No permission.",ephemeral:true});const d=db.prepare("SELECT * FROM drops WHERE status IN ('scheduled','open') ORDER BY id DESC LIMIT 1").get();if(!d)return i.reply({content:"No active drop.",ephemeral:true});db.prepare("UPDATE drops SET status='cancelled' WHERE id=?").run(d.id);return i.reply("Cancelled drop #"+d.id+".");}}
 }catch(e){console.error(e);const r={content:"Bot error; check host logs.",ephemeral:true};if(i.replied)await i.followUp(r).catch(()=>{});else await i.reply(r).catch(()=>{});}});
 const api=express();api.use((q,r,n)=>{r.setHeader("Access-Control-Allow-Origin","*");r.setHeader("Access-Control-Allow-Methods","GET,POST,OPTIONS");r.setHeader("Access-Control-Allow-Headers","Content-Type,x-rovian-secret");if(q.method==="OPTIONS")return r.sendStatus(204);n();});api.use(express.json({limit:"20kb"}));api.get("/health",(_,r)=>r.json({ok:true}));
-api.get("/api/shop/items",(_,r)=>r.json({items:db.prepare("SELECT id,type,name,price,image_url AS imageUrl FROM shop_items WHERE active=1 ORDER BY created_at DESC").all()}));api.use((q,r,n)=>{if(q.header("x-rovian-secret")!==process.env.API_SECRET)return r.status(401).json({error:"unauthorized"});n();});
+api.get("/api/shop/items",(_,r)=>r.json({items:db.prepare("SELECT id,type,name,price,image_url AS imageUrl FROM shop_items WHERE active=1 ORDER BY created_at DESC").all()}));
 api.post("/api/link/start",(q,r)=>{const {minecraftUuid,minecraftName}=q.body||{};if(typeof minecraftUuid!=="string"||!/^[0-9a-f-]{32,36}$/i.test(minecraftUuid)||typeof minecraftName!=="string"||!/^[A-Za-z0-9_]{1,16}$/.test(minecraftName))return r.status(400).json({error:"invalid_account"});const c=code(8);db.prepare("INSERT INTO links VALUES(?,?,?,?,0)").run(hash(c),minecraftUuid.toLowerCase(),minecraftName,now()+600);r.json({code:c,expiresInSeconds:600});});
-api.get("/api/balance/:uuid",(q,r)=>{const a=account.get(q.params.uuid.toLowerCase());r.json(a?{linked:!!a.discord_id,jems:a.jems}:{linked:false,jems:0});});
-api.post("/api/shop/purchase",(q,r)=>{
- const {uuid,itemId}=q.body||{};
- if(typeof uuid!=="string"||!/^[0-9a-f-]{32,36}$/i.test(uuid)||typeof itemId!=="string"||itemId.length>80)return r.status(400).json({error:"invalid_request"});
- try{
-  const result=db.transaction(()=>{
-   const a=account.get(uuid.toLowerCase());
-   if(!a||!a.discord_id)throw Error("not_linked");
-   const item=db.prepare("SELECT id,type,name,price,image_url FROM shop_items WHERE id=? AND active=1").get(itemId);
-   if(!item)throw Error("item_unavailable");
-   const debit=db.prepare("UPDATE accounts SET jems=jems-? WHERE uuid=? AND jems>=?").run(item.price,uuid.toLowerCase(),item.price);
-   if(!debit.changes)throw Error("insufficient_jems");
-   return {item,account:a,balance:a.jems-item.price};
-  })();
-  dm(uuid,"Purchase complete: "+result.item.name+" (-"+result.item.price+" Jems). Balance: "+result.balance+" Jems.");
-  return r.json({ok:true,item:{id:result.item.id,type:result.item.type,name:result.item.name,imageUrl:result.item.image_url},jems:result.balance});
- }catch(e){
-  const status={not_linked:403,item_unavailable:404,insufficient_jems:409}[e.message]||500;
-  return r.status(status).json({error:e.message==="Error"?"purchase_failed":e.message});
- }
-});
+api.get("/api/balance/:uuid",(q,r)=>{if(!/^[0-9a-f-]{32,36}$/i.test(q.params.uuid))return r.status(400).json({error:"invalid_uuid"});const a=account.get(q.params.uuid.toLowerCase());r.json(a?{linked:!!a.discord_id,jems:a.jems}:{linked:false,jems:0});});
+api.post("/api/shop/purchase/request",async(q,r)=>{const {uuid,itemId}=q.body||{};if(typeof uuid!=="string"||!/^[0-9a-f-]{32,36}$/i.test(uuid)||typeof itemId!=="string"||itemId.length>80)return r.status(400).json({error:"invalid_request"});const a=account.get(uuid.toLowerCase()),item=db.prepare("SELECT * FROM shop_items WHERE id=? AND active=1").get(itemId);if(!a?.discord_id)return r.status(403).json({error:"not_linked"});if(!item)return r.status(404).json({error:"item_unavailable"});const id=crypto.randomBytes(12).toString("hex");db.prepare("INSERT INTO purchase_requests(id,uuid,item_id,expires) VALUES(?,?,?,?)").run(id,uuid.toLowerCase(),itemId,now()+300);try{const user=await client.users.fetch(a.discord_id);await user.send({content:"Confirm Rovian purchase: **"+item.name+"** for **"+item.price+" Jems**. This request expires in 5 minutes.",components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("rovian_buy:"+id).setLabel("Confirm purchase").setStyle(ButtonStyle.Success))]});}catch{return r.status(503).json({error:"discord_dm_unavailable"});}r.json({ok:true,confirmationSent:true});});
+api.use((q,r,n)=>{if(q.header("x-rovian-secret")!==process.env.API_SECRET)return r.status(401).json({error:"unauthorized"});n();});
 api.listen(Number(process.env.PORT||3000),"0.0.0.0",()=>console.log("Rovian API listening"));
 (async()=>{const rest=new REST({version:"10"}).setToken(process.env.DISCORD_TOKEN);await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID,process.env.GUILD_ID),{body:commands});await client.login(process.env.DISCORD_TOKEN);})();
