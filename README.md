@@ -12,6 +12,8 @@ Discord bot + private Jems API for Rovian Client.
    - `GUILD_ID`: Discord server ID
    - `API_SECRET`: a long random secret (keep private)
    - `DROP_ROLE_IDS`: comma-separated Discord role IDs allowed to create/cancel drops; blank means administrators only
+   - `SHOP_UPLOAD_USER_IDS`: comma-separated Discord user IDs allowed to upload shop capes by DM
+   - Enable the **Message Content Intent** in the Discord Developer Portal for the bot
    - `DB_FILE`: `/data/jems.sqlite`
 5. Railway runs `npm start`. The service listens on Railway's `PORT`; health check is `/health`.
 
@@ -26,6 +28,15 @@ Discord bot + private Jems API for Rovian Client.
 - `GET /health`
 - `POST /api/link/start` — creates a 10-minute linking code
 - `GET /api/balance/:uuid`
+- `GET /api/shop/items` — public active shop items and cape image URLs
+
+## Upload capes by DM
+1. Add your Discord user ID to `SHOP_UPLOAD_USER_IDS` in Railway Variables (comma-separated for multiple staff).
+2. Enable Message Content Intent for the bot in the Discord Developer Portal.
+3. DM the bot one PNG, JPG, or WEBP image (max 8 MB) with: `Cape "Fire Wings", 500 Jems`.
+4. The bot adds it to the catalog; the Rovian launcher loads cape items from `/api/shop/items`.
+
+Uploads must be sent as a DM attachment. The image URL is the Discord attachment CDN URL.
 Private API requests require the `x-rovian-secret` header.
 
 ## Security
