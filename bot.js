@@ -37,5 +37,25 @@ const api=express();api.use((q,r,n)=>{r.setHeader("Access-Control-Allow-Origin",
 api.get("/api/shop/items",(_,r)=>r.json({items:db.prepare("SELECT id,type,name,price,image_url AS imageUrl FROM shop_items WHERE active=1 ORDER BY created_at DESC").all()}));api.use((q,r,n)=>{if(q.header("x-rovian-secret")!==process.env.API_SECRET)return r.status(401).json({error:"unauthorized"});n();});
 api.post("/api/link/start",(q,r)=>{const {minecraftUuid,minecraftName}=q.body||{};if(typeof minecraftUuid!=="string"||!/^[0-9a-f-]{32,36}$/i.test(minecraftUuid)||typeof minecraftName!=="string"||!/^[A-Za-z0-9_]{1,16}$/.test(minecraftName))return r.status(400).json({error:"invalid_account"});const c=code(8);db.prepare("INSERT INTO links VALUES(?,?,?,?,0)").run(hash(c),minecraftUuid.toLowerCase(),minecraftName,now()+600);r.json({code:c,expiresInSeconds:600});});
 api.get("/api/balance/:uuid",(q,r)=>{const a=account.get(q.params.uuid.toLowerCase());r.json(a?{linked:!!a.discord_id,jems:a.jems}:{linked:false,jems:0});});
+api.post("/api/shop/purchase",(q,r)=>{
+ const {uuid,itemId}=q.body||{};
+ if(typeof uuid!=="string"||!/^[0-9a-f-]{32,36}$/i.test(uuid)||typeof itemId!=="string"||itemId.length>80)return r.status(400).json({error:"invalid_request"});
+ try{
+  const result=db.transaction(()=>{
+   const a=account.get(uuid.toLowerCase());
+   if(!a||!a.discord_id)throw Error("not_linked");
+   const item=db.prepare("SELECT id,type,name,price,image_url FROM shop_items WHERE id=? AND active=1").get(itemId);
+   if(!item)throw Error("item_unavailable");
+   const debit=db.prepare("UPDATE accounts SET jems=jems-? WHERE uuid=? AND jems>=?").run(item.price,uuid.toLowerCase(),item.price);
+   if(!debit.changes)throw Error("insufficient_jems");
+   return {item,account:a,balance:a.jems-item.price};
+  })();
+  dm(uuid,"Purchase complete: "+result.item.name+" (-"+result.item.price+" Jems). Balance: "+result.balance+" Jems.");
+  return r.json({ok:true,item:{id:result.item.id,type:result.item.type,name:result.item.name,imageUrl:result.item.image_url},jems:result.balance});
+ }catch(e){
+  const status={not_linked:403,item_unavailable:404,insufficient_jems:409}[e.message]||500;
+  return r.status(status).json({error:e.message==="Error"?"purchase_failed":e.message});
+ }
+});
 api.listen(Number(process.env.PORT||3000),"0.0.0.0",()=>console.log("Rovian API listening"));
 (async()=>{const rest=new REST({version:"10"}).setToken(process.env.DISCORD_TOKEN);await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID,process.env.GUILD_ID),{body:commands});await client.login(process.env.DISCORD_TOKEN);})();
