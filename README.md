@@ -1,44 +1,40 @@
 # Rovian Bot
 
-Discord bot + private Jems API for Rovian Client.
+Discord bot and Jems API for the Rovian Minecraft client.
 
-## Deploy to Railway
-1. Create a Railway project and choose Deploy from GitHub repo.
-2. Select `Heyhello358/rovianbot`.
-3. Add a Volume mounted at `/data` so the SQLite database survives redeploys.
-4. Add these Railway Variables:
-   - `DISCORD_TOKEN`: your Discord bot token
-   - `CLIENT_ID`: Discord application ID
-   - `GUILD_ID`: Discord server ID
-   - `API_SECRET`: a long random secret (keep private)
-   - `DROP_ROLE_IDS`: comma-separated Discord role IDs allowed to create/cancel drops; blank means administrators only
-   - `SHOP_UPLOAD_USER_IDS`: comma-separated Discord user IDs allowed to upload shop capes by DM
-   - Enable the **Message Content Intent** in the Discord Developer Portal for the bot
-   - `DB_FILE`: `/data/jems.sqlite`
-5. Railway runs `npm start`. The service listens on Railway's `PORT`; health check is `/health`.
+## Railway setup
+Set these variables:
+- `DISCORD_TOKEN`, `CLIENT_ID`, `GUILD_ID`
+- `API_SECRET` (keep private; never put it in the Minecraft JAR)
+- `DROP_ROLE_IDS` (comma-separated role IDs allowed to schedule drops; administrators are also allowed)
+- `SHOP_UPLOAD_USER_IDS` (comma-separated staff Discord user IDs allowed to upload shop images)
+- `DB_FILE=/data/jems.sqlite` when using persistent storage
+- Enable Message Content Intent in the Discord Developer Portal.
+
+Use a Railway persistent volume mounted at `/data` or an external persistent database. Without persistent storage, SQLite balances and purchases can be lost when the service restarts.
 
 ## Commands
-- `/link code` — link Minecraft account; first link gives +200 Jems
-- `/balance` — show Jems\n- `/daily` — claim 20 Jems once per UTC calendar day
-- `/giftcode create` and `/giftcode redeem`
-- `/jems give` and `/jems remove` — administrators
-- `/jemdrop create`, `/jemdrop enter`, `/jemdrop cancel`
+- `/link code` — link a Minecraft account; first successful link grants +200 Jems.
+- `/balance` — check your balance.
+- `/daily` — claim 20 Jems once per UTC day.
+- `/giftcode create` and `/giftcode redeem` — create and redeem shareable codes.
+- `/jems gift user amount` — transfer Jems to another linked Discord/Minecraft account.
+- `/jems give uuid amount` and `/jems remove uuid amount` — administrator balance controls.
+- `/jemdrop create amount winners min-delay max-delay` — staff schedule a drop that opens at a random time inside the selected delay range.
+- `/jemdrop enter` — enter the currently open drop.
+- `/jemdrop cancel` — cancel the latest scheduled/open drop.
+
+## Cape uploads
+A user ID listed in `SHOP_UPLOAD_USER_IDS` can DM the bot one PNG, JPG, or WEBP attachment (maximum 8 MB) with a caption such as `Cape "Fire Wings", 500 Jems`. This adds the image to the shop catalogue. The current Fabric client can retrieve shop item metadata, but it does **not** yet render or equip custom capes in-game.
 
 ## API
 - `GET /health`
-- `POST /api/link/start` — creates a 10-minute linking code for the logged-in Minecraft profile
+- `GET /api/shop/items`
 - `GET /api/balance/:uuid`
-- `GET /api/shop/items` — public active shop items and cape image URLs
-- `POST /api/shop/purchase/request` — sends a purchase approval button to the linked Discord account; the Jems debit happens only after the Discord user confirms
+- `POST /api/link/start`
+- `POST /api/shop/purchase/request`
 
-## Upload capes by DM
-1. Add your Discord user ID to `SHOP_UPLOAD_USER_IDS` in Railway Variables (comma-separated for multiple staff).
-2. Enable Message Content Intent for the bot in the Discord Developer Portal.
-3. DM the bot one PNG, JPG, or WEBP image (max 8 MB) with: `Cape "Fire Wings", 500 Jems`.
-4. The bot adds it to the catalog; the Rovian Fabric client loads cape items from `/api/shop/items`.
+The Minecraft client uses the Railway public HTTPS domain. Purchases require confirmation from the linked Discord account.
 
-Uploads must be sent as a DM attachment. The image URL is the Discord attachment CDN URL.
-The Minecraft client must use the Railway public HTTPS domain. It does not contain `API_SECRET`; purchases are confirmed in Discord. Keep the database on persistent storage.
-
-## Security
-Development starter only. Never put the bot token or API secret in the Minecraft JAR or public client. The link endpoint must only be called by a trusted backend that has verified the player's Microsoft/Minecraft identity. Use HTTPS and production storage before opening this to public players.
+## Security limitations
+This is still a development build, not ready for public player accounts. The current public `/api/link/start` endpoint accepts a UUID and username supplied by the client; that does not prove ownership of the Minecraft account and can be spoofed. Before public launch, linking must be moved behind a trusted verification flow (for example, a server-side plugin on an online-mode server). Never ask players to paste Microsoft passwords, access tokens, or session tokens into Discord or the client.
