@@ -31,10 +31,10 @@ A user ID listed in `SHOP_UPLOAD_USER_IDS` can DM the bot one PNG, JPG, or WEBP 
 - `GET /health`
 - `GET /api/shop/items`
 - `GET /api/balance/:uuid`
-- `POST /api/link/start`
+- `POST /api/link/server-start` — private endpoint; requires the `x-rovian-secret` header and a trusted online-mode Paper server
 - `POST /api/shop/purchase/request`
 
-The Minecraft client uses the Railway public HTTPS domain. Purchases require confirmation from the linked Discord account.
+The Minecraft client uses the Railway public HTTPS domain. Discord linking codes must be created by the RovianLinkBridge Paper plugin on an online-mode server; the old client-supplied UUID route is disabled. Purchases require confirmation from the linked Discord account.
 
 ## Security limitations
 This is still a development build, not ready for public player accounts. The current public `/api/link/start` endpoint accepts a UUID and username supplied by the client; that does not prove ownership of the Minecraft account and can be spoofed. Before public launch, linking must be moved behind a trusted verification flow (for example, a server-side plugin on an online-mode server). Never ask players to paste Microsoft passwords, access tokens, or session tokens into Discord or the client.
